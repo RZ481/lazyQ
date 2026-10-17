@@ -39,6 +39,7 @@ A welcoming, responsive interface introducing customers to LazyQ.
 
 ![LazyQ Landing Page](screenshots/landing.png)
 
+![LazyQ Landing Page](screenshots/landing2.png)
 ### 2. Venue Screen — Scan to Join
 
 Venues display a dynamically generated QR code alongside the current queue status.
