@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LazyQ — queue without the queue</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a class="logo" href="index.html"><span class="mark">z</span><span>lazy<b class="q">Q</b></span></a>
+      <div class="nav-right">
+        <a class="btn small" href="ticket.html" data-i18n="nav_ticket"></a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <div>
+        <h1 data-i18n="hero_title"></h1>
+        <p class="muted" data-i18n="hero_sub"></p>
+        <div class="actions">
+          <a class="btn" href="#how" data-i18n="cta_primary"></a>
+          <a class="btn secondary" href="#venues" data-i18n="cta_secondary"></a>
+        </div>
+
+        <!-- Language picker: every customer-facing page follows this choice -->
+        <div class="langs">
+                    <div class="lang-row" id="lang-row" role="group" aria-label="Language"></div>
+        </div>
+      </div>
+
+      <!-- Live queue card, like Wise's live rate calculator: real numbers from the server -->
+      <div class="hero-art">
+        <div class="live-card">
+          <div class="live-head">
+            <span class="live-dot" id="live-title"></span>
+            <span class="pill" id="live-clock"></span>
+          </div>
+          <div class="live-row main"><span class="label" data-i18n="live_serving"></span><b id="live-serving">–</b></div>
+          <div class="live-row"><span class="label" data-i18n="live_waiting"></span><b id="live-waiting">–</b></div>
+          <div class="live-row"><span class="label" data-i18n="live_wait"></span><b id="live-wait">–</b></div>
+          <a class="btn" href="#how" data-i18n="s1_t"></a>
+          <p class="live-note" data-i18n="s1_d"></p>
+        </div>
+        <div class="sticker">No app needed</div>
+      </div>
+    </header>
+  </div>
+
+  <section class="section forest" id="how">
+    <div class="wrap">
+      <h2 data-i18n="how_title"></h2>
+      <div class="grid3">
+        <div class="card"><span class="step-n">1</span><h3 data-i18n="s1_t"></h3><p class="muted" data-i18n="s1_d"></p></div>
+        <div class="card"><span class="step-n">2</span><h3 data-i18n="s2_t"></h3><p class="muted" data-i18n="s2_d"></p></div>
+        <div class="card"><span class="step-n">3</span><h3 data-i18n="s3_t"></h3><p class="muted" data-i18n="s3_d"></p></div>
+      </div>
+    </div>
+  </section>
+
+
+  <section class="section alt" id="venues">
+    <div class="wrap">
+      <h2 data-i18n="venues_title"></h2>
+      <div class="grid3">
+        <div class="card"><h3 data-i18n="v1_t"></h3><p class="muted" data-i18n="v1_d"></p></div>
+        <div class="card"><h3 data-i18n="v2_t"></h3><p class="muted" data-i18n="v2_d"></p></div>
+        <div class="card"><h3 data-i18n="v3_t"></h3><p class="muted" data-i18n="v3_d"></p></div>
+      </div>
+    </div>
+  </section>
+
+
+  <div class="wrap"><footer class="footer muted" data-i18n="footer"></footer></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    // ---------- language chips
+    const row = document.getElementById("lang-row");
+    row.innerHTML = LANGS.map(l => `<button class="lang-chip" data-lang="${l.code}" lang="${l.code}">${l.name}</button>`).join("");
+    const markLang = () => row.querySelectorAll(".lang-chip").forEach(b => b.setAttribute("aria-pressed", b.dataset.lang === I18N.lang));
+    row.addEventListener("click", e => { const b = e.target.closest(".lang-chip"); if (b) I18N.set(b.dataset.lang); });
+    markLang(); I18N.onChange(markLang);
+
+    // ---------- live queue card
+    const $ = id => document.getElementById(id);
+    function renderLive() {
+      $("live-title").textContent = t("live_title", { venue: SQ_CONFIG.venueName });
+      $("live-clock").textContent = new Date().toLocaleTimeString(I18N.lang === "en" ? "en-GB" : I18N.lang, { hour: "2-digit", minute: "2-digit" });
+      const s = SQ.state;
+      if (!s) return;
+      const sum = SQ.summary(s);
+      $("live-serving").textContent = sum.nowServing || "–";
+      $("live-waiting").textContent = sum.waitingCount;
+      $("live-wait").textContent = sum.waitingCount ? "~" + I18N.mins(sum.newJoinerWaitSec) : I18N.mins(0);
+    }
+    renderLive(); I18N.onChange(renderLive); setInterval(renderLive, 15000);
+
+    SQ.subscribe(renderLive);
+  </script>
+</body>
+</html>

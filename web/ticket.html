@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My ticket — LazyQ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="phone">
+    <div class="phone-head">
+      <a class="logo" href="index.html"><span class="mark">z</span><span>lazy<b class="q">Q</b></span></a>
+      <select class="lang" id="lang" aria-label="Language"></select>
+    </div>
+
+    <!-- Not in a queue -->
+    <div class="ticket-stub" id="none" hidden>
+      <div class="top">
+        <h2 style="margin:8px 0;font-size:1.6rem" id="none-title" data-i18n="t_not_in"></h2>
+        <p class="muted" id="none-sub" data-i18n="t_not_in_sub"></p>
+      </div>
+    </div>
+
+    <a class="btn dark" href="index.html" id="none-discover" style="width:100%;margin-top:14px" hidden data-i18n="t_discover"></a>
+
+    <div id="active" hidden>
+      <div class="sample-note" id="sample-note" hidden>
+        <span class="pill" data-i18n="t_example"></span><span data-i18n="t_sample"></span>
+      </div>
+      <div class="ticket-stub" id="stub">
+        <div class="top">
+          <div class="brand" id="venue-name"></div>
+          <div class="label" style="margin-top:12px" data-i18n="t_your_number"></div>
+          <div class="huge" id="ticket">–</div>
+          <span class="pill" id="pill"></span>
+          <p class="headline" id="headline"></p>
+        </div>
+        <div class="bottom">
+          <div class="label" id="around-label"></div>
+          <div class="eta-time" id="around"></div>
+        </div>
+      </div>
+
+      <!-- Back to the landing page -->
+      <a class="btn dark" href="index.html" style="width:100%;margin-top:14px" data-i18n="t_discover"></a>
+
+      <!-- Wise-style progress tracker -->
+      <ol class="tracker" id="tracker"></ol>
+
+      <div class="card range" id="range-card" style="margin-top:12px">
+        <div class="label" data-i18n="t_roam"></div>
+        <p style="margin:6px 0 0" id="away"></p>
+        <p class="muted" id="distance" style="margin:6px 0 0"></p>
+        <button class="btn small secondary" id="loc" style="margin-top:14px" data-i18n="t_use_loc"></button>
+      </div>
+
+      <div class="stack" style="margin-top:16px">
+        <button class="btn" id="alerts" style="width:100%" data-i18n="t_alerts_btn"></button>
+        <button class="btn secondary" id="leave" style="width:100%" data-i18n="t_leave"></button>
+        <p class="muted" style="text-align:center;font-size:.85rem;margin-top:14px" id="serving-line"></p>
+      </div>
+    </div>
+  </main>
+  <div class="offline-badge" id="offline" hidden></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    const cfg = SQ_CONFIG;
+    const $ = id => document.getElementById(id);
+    I18N.mount($("lang"));
+    $("venue-name").textContent = cfg.venueName;
+
+    let mine = SQ.me();
+    let joinState = null;   // null | "joining" | "expired" | "error"
+
+    // Opened from the QR code (ticket.html?c=123456): create the ticket right here.
+    const code = new URLSearchParams(location.search).get("c");
+    if (code) {
+      joinState = "joining";
+      history.replaceState(null, "", "ticket.html");     // a refresh won't try to join again
+      (async () => {
+        let active = false;
+        if (mine) {                                        // already waiting on this phone? keep that ticket
+          try {
+            const s = await (await fetch("/api/state")).json();
+            const v = SQ.entryView(s, mine);
+            active = !!v && ["waiting", "called"].includes(v.status);
+          } catch {}
+        }
+        if (!active) {
+          try { mine = await SQ.join(code); joinState = null; }
+          catch (e) { joinState = e.message === "expired" ? "expired" : "error"; }
+        } else joinState = null;
+        await SQ.refresh();
+        render();
+      })();
+    }
+    let walkMin = null, distM = null, locState = null;   // locState: null | "finding" | "blocked" | "ok"
+    let audio = null, alertsOn = false, lastLevel = -1;
+
+    // ---------- location → walking time
+    function distanceMetres(a, b) {
+      const R = 6371000, rad = x => x * Math.PI / 180;
+      const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    }
+    $("loc").onclick = () => {
+      if (!navigator.geolocation) { locState = "blocked"; return render(); }
+      locState = "finding"; render();
+      navigator.geolocation.watchPosition(
+        pos => {
+          distM = distanceMetres({ lat: pos.coords.latitude, lng: pos.coords.longitude }, cfg.venue);
+          walkMin = distM / cfg.walkSpeed / 60;
+          locState = "ok"; render();
+        },
+        () => { locState = "blocked"; render(); },
+        { enableHighAccuracy: true, maximumAge: 15000 }
+      );
+    };
+
+    // ---------- alerts (phones need one tap before they allow sound)
+    $("alerts").onclick = () => {
+      try { audio = new (window.AudioContext || window.webkitAudioContext)(); beep(1); } catch {}
+      alertsOn = true; render();
+    };
+    function beep(times) {
+      if (!audio) return;
+      for (let i = 0; i < times; i++) {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = 660 + i * 220; o.connect(g); g.connect(audio.destination);
+        const at = audio.currentTime + i * 0.3;
+        g.gain.setValueAtTime(0.25, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.28);
+        o.start(at); o.stop(at + 0.28);
+      }
+    }
+    function alertUser(level) {
+      beep(level + 1);
+      if (navigator.vibrate) navigator.vibrate(level >= 2 ? [300, 150, 300, 150, 300] : [300]);
+    }
+
+    $("leave").onclick = async () => {
+      if (confirm(t("t_leave_confirm"))) { await SQ.leave(); location.href = "index.html"; }
+    };
+
+    // ---------- render
+    // levels: 0 waiting · 1 head back · 2 you're next · 3 your turn
+    const LEVELS = [
+      { cls: "state-waiting",  pill: "st_waiting",  pillCls: "",     head: "h_waiting" },
+      { cls: "state-headback", pill: "st_headback", pillCls: "warn", head: "h_headback" },
+      { cls: "state-next",     pill: "st_next",     pillCls: "go",   head: "h_next" },
+      { cls: "state-called",   pill: "st_called",   pillCls: "go",   head: "h_called" },
+    ];
+    const clock = sec => new Date(Date.now() + sec * 1000).toLocaleTimeString(I18N.lang === "en" ? "en-GB" : I18N.lang, { hour: "2-digit", minute: "2-digit" });
+
+    function renderTracker(level, ahead, finished) {
+      const steps = [
+        { text: t("tr_joined") },
+        { text: t("tr_ahead", { n: ahead }) },
+        { text: t("tr_headback") },
+        { text: t("tr_next") },
+        { text: t("tr_turn") },
+      ];
+      // step index that is "in progress" for each level
+      const current = finished ? 5 : [1, 2, 3, 4][level];
+      $("tracker").innerHTML = steps.map((s, i) =>
+        `<li class="${i < current ? "done" : i === current ? "now" : ""}">${s.text}</li>`).join("");
+    }
+
+    // Example ticket for visitors who haven't scanned yet
+    const SAMPLE = { status: "waiting", ticket: 27, ahead: 4, etaSec: 8 * 60, nowServing: 23 };
+
+    function render() {
+      const s = SQ.state;
+      if (!s && (mine || joinState)) return;          // wait for live data before deciding
+      let v = s && mine ? SQ.entryView(s, mine) : null;
+
+      // No ticket yet (and not in the middle of joining): show an example ticket
+      const sample = !v && !joinState;
+      if (sample) v = SAMPLE;
+      $("sample-note").hidden = !sample;
+      $("stub").classList.toggle("is-sample", sample);
+      $("stub").dataset.watermark = t("t_example");
+      ["leave", "alerts", "serving-line"].forEach(id => $(id).hidden = sample);
+
+      $("none").hidden = !!v; $("active").hidden = !v; $("none-discover").hidden = !!v;
+      if (!v) {
+        const [title, sub] = {
+          joining: ["join_joining", ""],
+          expired: ["join_expired", "join_expired_sub"],
+          error:   ["join_error", ""],
+        }[joinState] || ["t_not_in", "t_not_in_sub"];
+        $("none-title").textContent = t(title);
+        $("none-sub").textContent = sub ? t(sub) : "";
+        return;
+      }
+
+      $("ticket").textContent = v.ticket;
+      $("serving-line").textContent = t("t_footer", { n: v.nowServing || "–" });
+      $("alerts").textContent = t(alertsOn ? "t_alerts_on" : "t_alerts_btn");
+      $("alerts").disabled = alertsOn;
+
+      // finished states
+      if (["served", "no_show", "left"].includes(v.status)) {
+        document.body.className = "";
+        $("pill").className = "pill off";
+        $("pill").textContent = t({ served: "st_served", no_show: "st_noshow", left: "st_left" }[v.status]);
+        $("headline").textContent = t(v.status === "no_show" ? "h_noshow" : "h_served");
+        $("around-label").textContent = ""; $("around").textContent = "";
+        renderTracker(3, 0, v.status === "served");
+        ["range-card", "leave", "alerts"].forEach(id => $(id).hidden = true);
+        if (v.status !== "served") $("tracker").hidden = true;
+        return;
+      }
+
+      const etaMin = v.etaSec / 60;
+      let level = 0;
+      if (v.status === "called") level = 3;
+      else if (v.ahead === 0) level = 2;
+      else if (walkMin !== null ? walkMin + cfg.returnBufferMin >= etaMin : etaMin <= cfg.returnBufferMin) level = 1;
+
+      const L = LEVELS[level];
+      document.body.className = L.cls;
+      $("pill").className = "pill " + L.pillCls;
+      $("pill").textContent = t(L.pill);
+      $("headline").textContent = t(L.head);
+
+      // "Your turn around 15:42" (like Wise's "should arrive by")
+      if (v.status === "called") {
+        $("around-label").textContent = t("t_turn_in");
+        $("around").textContent = t("t_now");
+      } else {
+        $("around-label").textContent = t("t_turn_in") + " · " + (v.etaSec >= 60 ? "~" : "") + I18N.mins(v.etaSec);
+        $("around").textContent = t("t_around", { time: clock(v.etaSec) });
+      }
+
+      renderTracker(level, v.ahead, false);
+
+      const awaySec = Math.max(0, (etaMin - cfg.returnBufferMin) * 60);
+      $("away").innerHTML = t("t_roam_text", { m: `<strong>${I18N.mins(level === 0 ? awaySec : 0)}</strong>` });
+      $("distance").textContent =
+        locState === "ok" ? t("t_distance", { m: I18N.mins(walkMin * 60), d: Math.round(distM) }) :
+        locState === "finding" ? t("t_finding") :
+        locState === "blocked" ? t("t_loc_blocked") : "";
+      $("loc").hidden = locState === "ok";
+      $("range-card").hidden = level >= 2 || sample;
+      document.title = sample ? `${t("t_example")} — LazyQ` : `#${v.ticket} · ${t(L.pill)} — LazyQ`;
+      if (sample) return;                              // no alerts for the example
+
+      if (lastLevel !== -1 && level > lastLevel && level > 0) alertUser(level);
+      lastLevel = level;
+    }
+
+    SQ.subscribe(render);
+    render();   // show the example straight away, even before live data arrives
+    I18N.onChange(render);
+    SQ.onStatus(on => { $("offline").hidden = on; $("offline").textContent = t("offline"); });
+    setInterval(render, 15000);
+  </script>
+</body>
+</html>

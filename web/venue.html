@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Counter screen — LazyQ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- The counter screen is English only -->
+  <main class="venue">
+    <section class="left">
+      <div class="logo"><span class="mark">z</span><span>lazy<b class="q">Q</b></span> <span style="font-weight:600;opacity:.7" id="venue-name"></span></div>
+      <div class="label" style="margin-top:8vh">Now serving</div>
+      <div class="huge" id="serving"></div>
+      <p class="wait" id="wait"></p>
+      <div class="up-next" id="up-next" hidden>
+        <span class="label">Up next</span>
+        <div class="up-next-row" id="up-next-row"></div>
+      </div>
+    </section>
+
+    <section class="right">
+      <div class="scan-line">Scan to join<br>the queue</div>
+      <a class="qr" id="qr" target="_blank" title="Open join link (testing)"></a>
+      <div class="code-digits" id="code">······</div>
+      <div class="bar"><i id="bar"></i></div>
+    </section>
+  </main>
+  <div class="offline-badge" id="offline" hidden>Reconnecting…</div>
+
+  <script src="js/vendor/qrcode.js"></script>  <!-- qrcode-generator 1.4.4 (MIT), bundled so it works offline -->
+  <script src="js/config.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    const cfg = SQ_CONFIG;
+    const $ = id => document.getElementById(id);
+    const EN = (k, v) => I18N.t(k, v, "en");
+    $("venue-name").textContent = "· " + cfg.venueName;
+
+    // ---------- live numbers
+    SQ.subscribe(s => {
+      const sum = SQ.summary(s);
+      $("serving").textContent = sum.nowServing || "Not started";
+      $("serving").classList.toggle("idle", !sum.nowServing);
+      $("wait").textContent = sum.waitingCount
+        ? `${sum.waitingCount} waiting · about ${I18N.mins(sum.newJoinerWaitSec, "en")} wait`
+        : "No queue right now. Scan to join.";
+      const next = s.tickets.filter(x => x.s === "waiting").slice(0, 4);
+      $("up-next").hidden = !next.length;
+      $("up-next-row").innerHTML = next.map(x => `<span>${x.t}</span>`).join("");
+    });
+    SQ.onStatus(on => { $("offline").hidden = on; });
+
+    // ---------- rotating QR (the code comes from server.py)
+    let lastCode = null, codeInfo = null, fetchedAt = 0;
+
+    function showProblem(html) {
+      lastCode = null;
+      $("qr").removeAttribute("href");
+      $("qr").innerHTML = `<div style="height:100%;display:grid;place-items:center;text-align:center;color:#0e0f0c;font:600 1rem/1.4 Inter,sans-serif;padding:10px">${html}</div>`;
+      $("code").textContent = "······";
+    }
+
+    async function tick() {
+      if (location.protocol === "file:") {
+        return showProblem("This page was opened as a file.<br><br>Run <b>python3 server.py</b> and open<br><b>http://localhost:8000/venue.html</b>");
+      }
+      try {
+        const left = codeInfo ? codeInfo.secondsLeft - (Date.now() - fetchedAt) / 1000 : 0;
+        if (!codeInfo || left <= 0) {
+          const r = await fetch("/api/code?key=" + encodeURIComponent(cfg.staffKey));
+          if (r.status === 403) return showProblem("Staff key mismatch.<br><br><b>staffKey</b> in config.js must match <b>STAFF_KEY</b> in server.py");
+          if (!r.ok) throw new Error();
+          codeInfo = await r.json();
+          fetchedAt = Date.now();
+        }
+        const remaining = Math.max(0, codeInfo.secondsLeft - (Date.now() - fetchedAt) / 1000);
+        $("bar").style.width = (remaining / codeInfo.step * 100) + "%";
+        if (codeInfo.code === lastCode) return;
+        lastCode = codeInfo.code;
+        const url = new URL("ticket.html", location.href);   // scanning opens the ticket straight away
+        url.searchParams.set("c", codeInfo.code);
+        const qr = qrcode(0, "M");
+        qr.addData(url.toString());
+        qr.make();
+        $("qr").innerHTML = qr.createSvgTag({ cellSize: 6, margin: 0 });
+        $("qr").href = url.toString();
+        $("code").textContent = codeInfo.code;
+      } catch {
+        codeInfo = null;
+        showProblem("Can't reach the queue server.<br><br>Is <b>server.py</b> running?<br>Open this page from the address it prints.");
+      }
+    }
+    tick();
+    setInterval(tick, 1000);
+  </script>
+</body>
+</html>
