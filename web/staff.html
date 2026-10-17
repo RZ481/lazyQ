@@ -1,126 +1,342 @@
+
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Staff — LazyQ</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap">
   <link rel="stylesheet" href="css/style.css">
 </head>
+
 <body>
-  <!-- The whole screen is the "next" button -->
-  <main class="staff" id="pad" aria-label="Tap anywhere to call the next customer">
-    <div class="label">Now serving</div>
-    <div class="huge" id="serving"></div>
-    <div class="hint">Tap anywhere for next · hold to skip a no-show</div>
-  </main>
+  <!-- Staff dashboard, hidden until authenticated -->
+  <div id="staff-app" hidden>
 
-  <!-- Top bar sits above the pad, so its buttons never count as a "next" tap -->
-  <div class="staff-bar">
-    <span id="waiting"></span>
-    <span id="clock"></span>
+    <main class="staff" id="pad"
+          aria-label="Tap anywhere to call the next customer">
+      <div class="label">Now serving</div>
+      <div class="huge" id="serving"></div>
+      <div class="hint">
+        Tap anywhere for next · hold to skip a no-show
+      </div>
+    </main>
+
+    <div class="staff-bar">
+      <span id="waiting"></span>
+      <span id="clock"></span>
+    </div>
+
+    <div class="undo-bar" id="undo-bar">
+      <span id="undo-text"></span>
+      <button id="undo" type="button">Undo</button>
+    </div>
+
+    <div class="staff-stats">
+      <span id="st-served"></span>
+      <span id="st-avg"></span>
+    </div>
+
+    <div class="offline-badge" id="offline" hidden>
+      Not connected — taps won't count
+    </div>
+
   </div>
 
-  <div class="undo-bar" id="undo-bar">
-    <span id="undo-text"></span>
-    <button id="undo">Undo</button>
+  <!-- Login status -->
+  <div id="login-status" role="status"
+       style="padding: 24px; text-align: center;">
+    Checking staff access...
   </div>
-
-  <!-- Today at a glance -->
-  <div class="staff-stats"><span id="st-served"></span><span id="st-avg"></span></div>
-
-  <div class="offline-badge" id="offline" hidden>Not connected — taps won't count</div>
 
   <script src="js/config.js"></script>
   <script src="js/i18n.js"></script>
   <script src="js/api.js"></script>
+
   <script>
-    const cfg = SQ_CONFIG;
+    "use strict";
+
     const $ = id => document.getElementById(id);
-    const pad = $("pad");
-    pad.style.setProperty("--hold", cfg.longPressMs + "ms");
-    
-    SQ.subscribe(s => {
-      const sum = SQ.summary(s);
-      $("serving").textContent = sum.nowServing || "–";
-      $("waiting").textContent = `${sum.waitingCount} waiting`;
-      $("st-served").textContent = `${s.servedCount || 0} served today`;
-      $("st-avg").textContent = `~${Math.round(s.avgServiceSec)}s per customer`;
-    });
-    SQ.onStatus(on => { $("offline").hidden = on; });
 
-    // ---------- next / no-show
-    let lastAction = 0, undoTimer = null, busy = false;
+    // Never hardcode the real staff password in JavaScript.
+    SQ_CONFIG.staffKey = "";
 
-    async function act(type) {
-      const now = Date.now();
-      if (busy || now - lastAction < cfg.lockoutMs) return;   // double-tap protection
-      lastAction = now; busy = true;
-      try {
-        const res = await SQ.advance(type);
-        if (!res.changed) return feedback(false, "Queue is empty");
-        feedback(true);
-        showUndo(type === "noshow" ? `Skipped · now serving ${res.now_serving}` : `Now serving ${res.now_serving}`);
-      } catch {
-        feedback(false, "Not sent — check connection");
-      } finally { busy = false; }
+    async function staffLogin() {
+      let password = sessionStorage.getItem("lazyq_staff_key");
+
+      while (true) {
+        if (!password) {
+          password = prompt("Enter your LazyQ staff password:");
+
+          if (password === null) {
+            window.location.replace("index.html");
+            return false;
+          }
+
+          if (!password.trim()) {
+            password = null;
+            continue;
+          }
+        }
+
+        try {
+          const response = await fetch("/api/code", {
+            headers: {
+              "X-Staff-Key": password
+            },
+            cache: "no-store"
+          });
+
+          if (response.ok) {
+            sessionStorage.setItem("lazyq_staff_key", password);
+            SQ_CONFIG.staffKey = password;
+            return true;
+          }
+
+          if (response.status === 403) {
+            sessionStorage.removeItem("lazyq_staff_key");
+            password = null;
+            alert("Incorrect staff password. Please try again.");
+            continue;
+          }
+
+          alert("Could not verify staff access.");
+          return false;
+
+        } catch (error) {
+          alert("Cannot connect to the server.");
+          return false;
+        }
+      }
     }
 
-    function feedback(ok, message) {
-      if (navigator.vibrate) navigator.vibrate(ok ? 40 : [20, 60, 20]);
-      pad.classList.remove("flash"); void pad.offsetWidth; pad.classList.add("flash");
-      if (message) showUndo(message, false);
-    }
+    async function initializeStaffDashboard() {
+      const authenticated = await staffLogin();
 
-    function showUndo(text, canUndo = true) {
-      $("undo-text").textContent = text;
-      $("undo").hidden = !canUndo;
-      $("undo-bar").classList.add("show");
-      clearTimeout(undoTimer);
-      undoTimer = setTimeout(() => $("undo-bar").classList.remove("show"), 5000);
-    }
-    $("undo").onclick = async () => {
-      $("undo-bar").classList.remove("show");
-      try { await SQ.undo(); } catch {}
-      lastAction = 0;
-    };
+      if (!authenticated) {
+        $("login-status").textContent =
+          "Staff access unavailable. Refresh to try again.";
+        return;
+      }
 
-    // ---------- tap = next, hold = no-show
-    let holdTimer = null, held = false, down = false;
-    pad.addEventListener("pointerdown", () => {
-      down = true; held = false;
-      pad.classList.add("holding");
-      holdTimer = setTimeout(() => { held = true; pad.classList.remove("holding"); act("noshow"); }, cfg.longPressMs);
-    });
-    pad.addEventListener("pointerup", () => {
-      if (!down) return;
-      down = false; clearTimeout(holdTimer); pad.classList.remove("holding");
-      if (!held) act("next");
-    });
-    ["pointercancel", "pointerleave"].forEach(ev => pad.addEventListener(ev, () => {
-      down = false; clearTimeout(holdTimer); pad.classList.remove("holding");
-    }));
-    pad.addEventListener("contextmenu", e => e.preventDefault());
+      $("login-status").hidden = true;
+      $("staff-app").hidden = false;
 
-    // ---------- presentation clicker / keyboard
-    document.addEventListener("keydown", e => {
-      if (e.repeat) return;
-      if (["PageDown", "ArrowRight", "ArrowDown", "Enter", " "].includes(e.key)) { e.preventDefault(); act("next"); }
-      else if (["PageUp", "ArrowLeft", "ArrowUp", "Backspace"].includes(e.key)) { e.preventDefault(); $("undo").click(); }
-      else if (e.key === "s" || e.key === "S") act("noshow");
-    });
+      const cfg = SQ_CONFIG;
+      const pad = $("pad");
 
-    // ---------- clock
-    const tickClock = () => $("clock").textContent = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-    tickClock(); setInterval(tickClock, 10000);
+      pad.style.setProperty(
+        "--hold",
+        cfg.longPressMs + "ms"
+      );
 
-    // ---------- keep the screen awake
-    async function stayAwake() { try { if ("wakeLock" in navigator) await navigator.wakeLock.request("screen"); } catch {} }
-    stayAwake();
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") stayAwake(); });
+      // ---------- Live queue state
+      SQ.subscribe(s => {
+        const sum = SQ.summary(s);
+
+        $("serving").textContent = sum.nowServing || "–";
+        $("waiting").textContent =
+          `${sum.waitingCount} waiting`;
+
+        $("st-served").textContent =
+          `${s.servedCount || 0} served today`;
+
+        $("st-avg").textContent =
+          `~${Math.round(s.avgServiceSec)}s per customer`;
+      });
+
+      SQ.onStatus(online => {
+        $("offline").hidden = online;
+      });
+
+      // ---------- Next / no-show
+      let lastAction = 0;
+      let undoTimer = null;
+      let busy = false;
+
+      async function act(type) {
+        const now = Date.now();
+
+        if (busy || now - lastAction < cfg.lockoutMs) {
+          return;
+        }
+
+        lastAction = now;
+        busy = true;
+
+        try {
+          const res = await SQ.advance(type);
+
+          if (!res.changed) {
+            feedback(false, "Queue is empty");
+            return;
+          }
+
+          feedback(true);
+
+          showUndo(
+            type === "noshow"
+              ? `Skipped · now serving ${res.now_serving}`
+              : `Now serving ${res.now_serving}`
+          );
+
+        } catch (error) {
+          feedback(false, "Not sent — check connection");
+
+        } finally {
+          busy = false;
+        }
+      }
+
+      function feedback(ok, message) {
+        if (navigator.vibrate) {
+          navigator.vibrate(
+            ok ? 40 : [20, 60, 20]
+          );
+        }
+
+        pad.classList.remove("flash");
+        void pad.offsetWidth;
+        pad.classList.add("flash");
+
+        if (message) {
+          showUndo(message, false);
+        }
+      }
+
+      function showUndo(message, canUndo = true) {
+        $("undo-text").textContent = message;
+        $("undo").hidden = !canUndo;
+        $("undo-bar").classList.add("show");
+
+        clearTimeout(undoTimer);
+
+        undoTimer = setTimeout(() => {
+          $("undo-bar").classList.remove("show");
+        }, 5000);
+      }
+
+      $("undo").addEventListener("click", async () => {
+        $("undo-bar").classList.remove("show");
+
+        try {
+          await SQ.undo();
+        } catch (error) {
+          console.error("Undo failed:", error);
+        }
+
+        lastAction = 0;
+      });
+
+      // ---------- Tap = next, hold = no-show
+      let holdTimer = null;
+      let held = false;
+      let down = false;
+
+      pad.addEventListener("pointerdown", () => {
+        down = true;
+        held = false;
+
+        pad.classList.add("holding");
+
+        holdTimer = setTimeout(() => {
+          held = true;
+          pad.classList.remove("holding");
+          act("noshow");
+        }, cfg.longPressMs);
+      });
+
+      pad.addEventListener("pointerup", () => {
+        if (!down) return;
+
+        down = false;
+
+        clearTimeout(holdTimer);
+        pad.classList.remove("holding");
+
+        if (!held) {
+          act("next");
+        }
+      });
+
+      ["pointercancel", "pointerleave"].forEach(eventName => {
+        pad.addEventListener(eventName, () => {
+          down = false;
+          clearTimeout(holdTimer);
+          pad.classList.remove("holding");
+        });
+      });
+
+      pad.addEventListener("contextmenu", event => {
+        event.preventDefault();
+      });
+
+      // ---------- Keyboard controls
+      document.addEventListener("keydown", event => {
+        if (event.repeat) return;
+
+        const nextKeys = [
+          "PageDown", "ArrowRight",
+          "ArrowDown", "Enter", " "
+        ];
+
+        const undoKeys = [
+          "PageUp", "ArrowLeft",
+          "ArrowUp", "Backspace"
+        ];
+
+        if (nextKeys.includes(event.key)) {
+          event.preventDefault();
+          act("next");
+
+        } else if (undoKeys.includes(event.key)) {
+          event.preventDefault();
+          $("undo").click();
+
+        } else if (event.key.toLowerCase() === "s") {
+          act("noshow");
+        }
+      });
+
+      // ---------- Clock
+      function tickClock() {
+        $("clock").textContent =
+          new Date().toLocaleTimeString("en-GB", {
+            hour: "2-digit",
+            minute: "2-digit"
+          });
+      }
+
+      tickClock();
+      setInterval(tickClock, 10000);
+
+      // ---------- Keep screen awake
+      async function stayAwake() {
+        try {
+          if ("wakeLock" in navigator) {
+            await navigator.wakeLock.request("screen");
+          }
+        } catch (error) {
+          // Wake lock may not be available on every device.
+        }
+      }
+
+      stayAwake();
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          stayAwake();
+        }
+      });
+
+    } // End initializeStaffDashboard
+
+    initializeStaffDashboard();
   </script>
 </body>
 </html>
