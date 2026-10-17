@@ -1,30 +1,20 @@
-
-// LazyQ — shared configuration for all pages
-
+// LazyQ — settings shared by every page. Edit these first.
 window.SQ_CONFIG = {
-  // Venue information
   venueName: "Demo Café",
 
-  // Demo venue location in London
-  venue: {
-    lat: 51.5072,
-    lng: -0.1276
-  },
+  // Venue location (used for the "free to roam" range on the ticket page). Replace with the real venue.
+  venue: { lat: 51.5072, lng: -0.1276 },
 
-  // Staff authentication
-  // Never hardcode a password in frontend JavaScript.
-  // Staff enter their password on staff.html.
-  // It is stored temporarily in this browser tab.
-  staffKey: sessionStorage.getItem("lazyq_staff_key") || "",
+  // Staff key for the counter + staff screens. Must match STAFF_KEY in server.py.
+  // (Fine for a demo; a real product would use a proper staff login.)
+  staffKey: "demo-staff",
 
-  // Estimated waiting time settings
-  etaPadding: 1.15,
+  // Wait-time model
+  etaPadding: 1.15,        // pad estimates so people arrive early rather than late
+  returnBufferMin: 5,      // "head back" when walk time is within this many minutes of your turn
+  walkSpeed: 1.3,          // metres per second
 
-  // Return-to-venue guidance
-  returnBufferMin: 5,
-  walkSpeed: 1.3,
-
-  // Staff dashboard settings
-  longPressMs: 800,
-  lockoutMs: 700
+  // Staff screen
+  longPressMs: 800,        // hold this long = no-show / skip
+  lockoutMs: 700,          // ignore repeat taps faster than this
 };
