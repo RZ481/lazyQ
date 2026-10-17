@@ -1,98 +1,141 @@
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from threading import Lock
+from pathlib import Path
+import sqlite3
 
-# Create our backend application
 app = FastAPI(title="LazyQ API")
 
-# Temporary queue data
-queue = []
-next_ticket = 1
-currently_serving = None
-lock = Lock()
+# Database file inside the backend folder
+DB_PATH = Path(__file__).parent / "lazyq.db"
 
 
-# Define the information a customer sends
+# Connect to SQLite
+def get_connection():
+    connection = sqlite3.connect(DB_PATH, timeout=10)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+# Create the database table when the app starts
+def initialize_database():
+    with get_connection() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'waiting'
+            )
+        """)
+
+
+initialize_database()
+
+
+# Customer information
 class Customer(BaseModel):
     name: str
 
 
-# Check if our backend works
+# Homepage
 @app.get("/")
 def home():
-    return {"message": "Welcome to LazyQ!"}
+    return {"message": "LazyQ backend is running!"}
 
 
-# Customer joins the queue
+# Join the queue
 @app.post("/queue/join")
 def join_queue(customer: Customer):
-    global next_ticket
+    if not customer.name.strip():
+        raise HTTPException(400, "Name cannot be empty")
 
-    with lock:
-        ticket = {
-            "number": next_ticket,
-            "name": customer.name
-        }
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO tickets (name, status) VALUES (?, ?)",
+            (customer.name.strip(), "waiting")
+        )
+        ticket_number = cursor.lastrowid
 
-        queue.append(ticket)
-        next_ticket += 1
+        people_ahead = conn.execute(
+            "SELECT COUNT(*) FROM tickets WHERE status = 'waiting' AND id < ?",
+            (ticket_number,)
+        ).fetchone()[0]
 
-        return {
-            "message": "Successfully joined!",
-            "ticket": ticket["number"],
-            "people_ahead": len(queue) - 1
-        }
+    return {
+        "message": "Joined successfully!",
+        "ticket": ticket_number,
+        "people_ahead": people_ahead
+    }
 
 
-# View the entire queue
+# View the queue
 @app.get("/queue")
 def get_queue():
-    with lock:
-        return {
-            "currently_serving": currently_serving,
-            "waiting": queue.copy(),
-            "total_waiting": len(queue)
-        }
+    with get_connection() as conn:
+        waiting = conn.execute(
+            "SELECT id, name FROM tickets WHERE status = 'waiting' ORDER BY id"
+        ).fetchall()
+
+        serving = conn.execute(
+            "SELECT id, name FROM tickets WHERE status = 'serving' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    return {
+        "currently_serving": dict(serving) if serving else None,
+        "waiting": [dict(ticket) for ticket in waiting],
+        "total_waiting": len(waiting)
+    }
 
 
-# Customer checks their position
+# Check a ticket's status
 @app.get("/queue/status/{ticket_number}")
 def check_position(ticket_number: int):
-    with lock:
-        if ticket_number == currently_serving:
-            return {
-                "status": "your_turn",
-                "people_ahead": 0
-            }
+    with get_connection() as conn:
+        ticket = conn.execute(
+            "SELECT id, status FROM tickets WHERE id = ?",
+            (ticket_number,)
+        ).fetchone()
 
-        for index, customer in enumerate(queue):
-            if customer["number"] == ticket_number:
-                return {
-                    "status": "waiting",
-                    "people_ahead": index
-                }
+        if ticket is None:
+            raise HTTPException(404, "Ticket not found")
 
-        raise HTTPException(
-            status_code=404,
-            detail="Ticket not found"
-        )
+        if ticket["status"] == "waiting":
+            people_ahead = conn.execute(
+                "SELECT COUNT(*) FROM tickets WHERE status = 'waiting' AND id < ?",
+                (ticket_number,)
+            ).fetchone()[0]
+        else:
+            people_ahead = 0
+
+    return {
+        "ticket": ticket_number,
+        "status": ticket["status"],
+        "people_ahead": people_ahead
+    }
 
 
 # Staff calls the next customer
 @app.post("/queue/next")
 def call_next():
-    global currently_serving
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE tickets SET status = 'completed' WHERE status = 'serving'"
+        )
 
-    with lock:
-        if not queue:
+        next_customer = conn.execute(
+            "SELECT id, name FROM tickets WHERE status = 'waiting' ORDER BY id LIMIT 1"
+        ).fetchone()
+
+        if next_customer is None:
             return {"message": "Queue is empty"}
 
-        customer = queue.pop(0)
-        currently_serving = customer["number"]
+        conn.execute(
+            "UPDATE tickets SET status = 'serving' WHERE id = ?",
+            (next_customer["id"],)
+        )
 
-        return {
-            "message": "Next customer called!",
-            "now_serving": currently_serving,
-            "customer": customer["name"]
-        }
+    return {
+        "message": "Next customer called!",
+        "now_serving": next_customer["id"],
+        "customer": next_customer["name"]
+    }
