@@ -215,7 +215,7 @@ For the intended customer experience, scan the QR code on the venue screen rathe
 
 ---
 
-## 🔐 Security & Current Limitations
+##  Security & Current Limitations
 
 LazyQ is currently a **hackathon prototype**, designed to demonstrate the core virtual queue experience.
 
@@ -250,7 +250,7 @@ Our vision is to make virtual queuing accessible to businesses and customers eve
 
 ---
 
-## 👩‍💻 Team & Collaboration
+##  Team & Collaboration
 
 Developed collaboratively for the **IKU Womxn in STEM Hackathon 2026**.
 
