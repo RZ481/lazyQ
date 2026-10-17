@@ -37,6 +37,24 @@
   <script src="js/api.js"></script>
   <script>
     const cfg = SQ_CONFIG;
+    // Venue staff authentication
+async function venueLogin() {
+  let password = sessionStorage.getItem("lazyq_staff_key");
+
+  if (!password) {
+    password = prompt("Enter your LazyQ staff password to display the QR code:");
+
+    if (!password) {
+      window.location.replace("index.html");
+      return false;
+    }
+  }
+
+  cfg.staffKey = password;
+  sessionStorage.setItem("lazyq_staff_key", password);
+
+  return true;
+}
     const $ = id => document.getElementById(id);
     const EN = (k, v) => I18N.t(k, v, "en");
     $("venue-name").textContent = "· " + cfg.venueName;
@@ -72,7 +90,12 @@
       try {
         const left = codeInfo ? codeInfo.secondsLeft - (Date.now() - fetchedAt) / 1000 : 0;
         if (!codeInfo || left <= 0) {
-          const r = await fetch("/api/code?key=" + encodeURIComponent(cfg.staffKey));
+          const r = await fetch("/api/code?", {
+            headers: {
+                "X-Staff-Key": cfg.staffKey
+            }, 
+            cache: "no-store"
+        });
           if (r.status === 403) return showProblem("Staff key mismatch.<br><br><b>staffKey</b> in config.js must match <b>STAFF_KEY</b> in server.py");
           if (!r.ok) throw new Error();
           codeInfo = await r.json();
@@ -95,8 +118,13 @@
         showProblem("Can't reach the queue server.<br><br>Is <b>server.py</b> running?<br>Open this page from the address it prints.");
       }
     }
-    tick();
-    setInterval(tick, 1000);
+    venueLogin().then(authenticated => {
+        if (authenticated) {
+            tick();
+            setInterval(tick, 1000);
+  }
+});
+
   </script>
 </body>
 </html>
