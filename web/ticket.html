@@ -44,7 +44,9 @@
       </div>
 
       <!-- Back to the landing page -->
-      <a class="btn dark" href="index.html" style="width:100%;margin-top:14px" data-i18n="t_discover"></a>
+      <!-- Cancel sits right under the ticket so it's easy to find -->
+      <button class="btn cancel" id="leave" type="button" style="width:100%;margin-top:14px" data-i18n="t_leave"></button>
+      <a class="btn dark" href="index.html" style="width:100%;margin-top:10px" data-i18n="t_discover"></a>
 
       <!-- Wise-style progress tracker -->
       <ol class="tracker" id="tracker"></ol>
@@ -58,7 +60,6 @@
 
       <div class="stack" style="margin-top:16px">
         <button class="btn" id="alerts" style="width:100%" data-i18n="t_alerts_btn"></button>
-        <button class="btn secondary" id="leave" style="width:100%" data-i18n="t_leave"></button>
         <p class="muted" style="text-align:center;font-size:.85rem;margin-top:14px" id="serving-line"></p>
       </div>
     </div>
@@ -144,7 +145,12 @@
     }
 
     $("leave").onclick = async () => {
-      if (confirm(t("t_leave_confirm"))) { await SQ.leave(); location.href = "index.html"; }
+      if (!confirm(t("t_leave_confirm"))) return;
+      $("leave").disabled = true;
+      try { await SQ.leave(); await SQ.refresh(); }
+      catch { alert(t("join_error")); }
+      $("leave").disabled = false;
+      render();
     };
 
     // ---------- render
@@ -209,10 +215,10 @@
         document.body.className = "";
         $("pill").className = "pill off";
         $("pill").textContent = t({ served: "st_served", no_show: "st_noshow", left: "st_left" }[v.status]);
-        $("headline").textContent = t(v.status === "no_show" ? "h_noshow" : "h_served");
+        $("headline").textContent = t({ served: "h_served", no_show: "h_noshow", left: "h_left" }[v.status]);
         $("around-label").textContent = ""; $("around").textContent = "";
         renderTracker(3, 0, v.status === "served");
-        ["range-card", "leave", "alerts"].forEach(id => $(id).hidden = true);
+        ["range-card", "leave", "alerts", "serving-line"].forEach(id => $(id).hidden = true);
         if (v.status !== "served") $("tracker").hidden = true;
         return;
       }
