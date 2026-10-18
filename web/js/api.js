@@ -100,8 +100,7 @@ window.SQ = (() => {
   }
   async function leave() {
     const m = me();
-    if (m) await post("/api/leave", { id: m.id }).catch(() => {});
-    try { localStorage.removeItem(MINE); } catch {}
+    if (m) await post("/api/leave", { id: m.id });   // throws if offline, so the page can say so
   }
 
   // staff

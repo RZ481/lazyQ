@@ -340,3 +340,7 @@ body.state-called .ticket-stub { animation: pulse 1.2s var(--ease) infinite; }
 
 /* logo: lazyQ with a green Q */
 .logo .q { color: inherit; font-weight: 900; }
+
+/* cancel ticket */
+.btn.cancel { background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1.5px var(--danger); }
+.btn.cancel:hover { background: rgba(208, 50, 56, .08); }

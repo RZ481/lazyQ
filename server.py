@@ -159,7 +159,7 @@ class Queue:
     def leave(self, eid):
         with self.cond:
             e = self.s["entries"].get(eid)
-            if e and e["status"] == "waiting":
+            if e and e["status"] in ("waiting", "called"):   # cancel any time before being served
                 e["status"] = "left"
                 self._commit()
             return {"ok": True}
